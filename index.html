@@ -85,20 +85,66 @@
             padding: 10px;
             margin-bottom: 10px;
         }
-        /* Removed login form styles as it's no longer present in HTML */
+        /* Styles for login form */
+        #appContent {
+            display: none; /* Hidden until authenticated */
+        }
+        #loginContainer {
+            max-width: 400px;
+            margin: 50px auto;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            background-color: #fff;
+        }
+        .login-status {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+        }
+        .login-status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .login-status.info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1 class="mb-4">Inventory Management App</h1>
 
-        <!-- Main App Content - now always visible as login is automatic -->
+        <!-- Login Container -->
+        <div id="loginContainer" class="card">
+            <div class="card-header">
+                <h3>Login to Inventory App</h3>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="loginEmail" class="form-label">Email address:</label>
+                    <input type="email" class="form-control" id="loginEmail" placeholder="name@example.com">
+                </div>
+                <div class="mb-3">
+                    <label for="loginPassword" class="form-label">Password:</label>
+                    <input type="password" class="form-control" id="loginPassword" placeholder="Password">
+                </div>
+                <button type="button" class="btn btn-primary w-100 mb-3" id="loginBtn">Login</button>
+                <div id="loginStatus" class="login-status info">Please enter your credentials.</div>
+            </div>
+        </div>
+
+        <!-- Main App Content (hidden until login) -->
         <div id="appContent">
             <div class="card">
                 <div class="card-body">
                     <div class="row">
                         <div class="col-md-6"><p>User ID: <span id="userId">Loading...</span></p></div>
-                        <div class="col-md-6"><p>Database Status: <span id="dbStatus">Connecting to Firebase...</span></p></div>
+                        <div class="col-md-6"><p>Database Status: <span id="dbStatus">Connected (Firebase Firestore)</span></p></div>
                     </div>
                     <button type="button" class="btn btn-secondary mt-3" id="logoutBtn">Logout</button>
                 </div>
@@ -277,20 +323,18 @@
 
         // --- Firebase SDK Imports ---
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        // ONLY signInWithCustomToken and signOut are needed for auth in this setup
-        import { getAuth, signInWithCustomToken, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, query, onSnapshot, doc, setDoc, deleteDoc, addDoc, getDocs, where, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- Global Variables ---
         let app;
         let db;
         let auth;
-        // currentUserId will be set to the UID of the logged-in user via custom token
-        let currentUserId = null; 
+        let currentUserId = null; // Will be set by Firebase auth state, but NOT used in data path
         let firestoreCollectionRef; 
 
         // Ensure these global variables are correctly parsed if available
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const appId = firebaseConfig.projectId; // Ensures appId is always the project ID
         const firebaseConfigFromGlobal = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : firebaseConfig;
 
         let inventoryData = [];
@@ -320,18 +364,56 @@
             confirmModal.hide();
         });
 
-        // Function to display login status messages (no longer used for login form, but kept for potential error messages)
+        // Function to display login status messages
         function showLoginStatus(message, isError = false) {
-            // If you want to display this message in the UI, you'll need an element for it.
-            // For now, it will only log to console or be unused.
-            console.log(`Login Status: ${message} (Error: ${isError})`);
+            const loginStatusDiv = document.getElementById('loginStatus');
+            loginStatusDiv.textContent = message;
+            if (isError) {
+                loginStatusDiv.classList.remove('info');
+                loginStatusDiv.classList.add('error');
+            } else {
+                loginStatusDiv.classList.remove('error');
+                loginStatusDiv.classList.add('info');
+            }
         }
-        
+
+        /**
+         * Handles user login with email and password.
+         * @param {Event} e - The click event.
+         */
+        document.getElementById('loginBtn').addEventListener('click', async (e) => {
+            e.preventDefault(); 
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+
+            if (!email || !password) {
+                showLoginStatus("Please enter both email and password.", true);
+                return;
+            }
+
+            showLoginStatus("Logging in...", false);
+            try {
+                await signInWithEmailAndPassword(auth, email, password);
+                // onAuthStateChanged listener will handle UI update
+            } catch (error) {
+                console.error("Login Error:", error);
+                let errorMessage = "Login failed. Please check your credentials.";
+                if (error.code === 'auth/operation-not-allowed') {
+                    errorMessage = "Email/Password sign-in is not enabled in Firebase. Please enable it in the Firebase console.";
+                } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+                    errorMessage = "Invalid email or password.";
+                } else if (error.code === 'auth/too-many-requests') {
+                    errorMessage = "Too many login attempts. Please try again later.";
+                }
+                showLoginStatus(errorMessage, true);
+            }
+        });
+
         // Event listener for the logout button
         document.getElementById('logoutBtn').addEventListener('click', async () => {
             try {
                 await signOut(auth);
-                // onAuthStateChanged will handle the UI state after logout
+                // onAuthStateChanged will handle hiding app content and showing login
             } catch (error) {
                 console.error("Logout Error:", error);
                 showCustomConfirm(`Logout failed: ${error.message}`, () => {});
@@ -346,52 +428,29 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                // Attempt to sign in with the custom token provided by the Canvas environment.
-                // This assumes __initial_auth_token is provided and corresponds to the UID you want to share.
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token)
-                        .then(() => {
-                            console.log("Signed in with custom token from Canvas.");
-                        })
-                        .catch(error => {
-                            console.error("Error with custom token sign-in:", error);
-                            document.getElementById('dbStatus').textContent = `Auth Error: ${error.message}`;
-                            showCustomConfirm(`Authentication failed. Please ensure Firebase setup and token are correct.`, () => {});
-                        });
-                } else {
-                    // Fallback for environments where __initial_auth_token is not provided.
-                    // This will result in an unauthenticated user, meaning no data access.
-                    // You might want to display a clear message to the user in this case.
-                    console.warn("No __initial_auth_token provided. App will not be authenticated automatically.");
-                    document.getElementById('dbStatus').textContent = 'Not authenticated (No token)';
-                }
-
-                // Listen for authentication state changes - this is the main handler
+                // Listen for auth state changes - this is the main handler
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
-                        // User is signed in (via custom token)
-                        currentUserId = user.uid; // Set currentUserId to the UID of the logged-in user
+                        currentUserId = user.uid; // Store the logged-in user's UID (for display), but not used in data path
                         document.getElementById('userId').textContent = currentUserId;
                         document.getElementById('dbStatus').textContent = 'Connected (Firebase Firestore)';
                         
-                        // Show the main application content
+                        document.getElementById('loginContainer').style.display = 'none';
                         document.getElementById('appContent').style.display = 'block';
 
-                        // Set up Firestore listener ONLY after a user is authenticated
                         setupFirestoreListener(); 
+                        showLoginStatus("Logged in successfully.", false); 
                     } else {
-                        // User is signed out or not authenticated (e.g., after logout)
-                        currentUserId = null; // Ensure currentUserId is null
+                        currentUserId = null; 
                         document.getElementById('userId').textContent = 'Not Logged In';
                         document.getElementById('dbStatus').textContent = 'Disconnected';
                         
-                        // Hide the main application content if no user
-                        document.getElementById('appContent').style.display = 'none'; // Ensure content is hidden
+                        document.getElementById('loginContainer').style.display = 'block';
+                        document.getElementById('appContent').style.display = 'none';
                         
-                        // Clear any loaded data when logged out
                         inventoryData = []; 
-                        updateTable(); // Refresh the table to show "No data"
-                        showCustomConfirm("You have been logged out. Data access requires authentication.", () => {});
+                        updateTable(); 
+                        showLoginStatus("Please log in to continue.", false);
                     }
                     document.getElementById('cancelEdit').style.display = 'none';
                 });
@@ -483,7 +542,7 @@
 
                 if (existingPermit) {
                     document.getElementById('permitDate').value = existingPermit.permitDate || '';
-                    document.getElementById('approvedQty').value = existingPermit.approvedQty || 0;
+                    document.getElementById('approvedQty').value = existingPermitingPermit.approvedQty || 0;
                 }
             }
         }
@@ -492,16 +551,14 @@
          * Sets up the Firestore listener to fetch and update inventory data in real-time.
          */
         function setupFirestoreListener() {
-            // Ensure db and currentUserId are available before setting up listener
-            if (!db || !currentUserId) {
-                console.error("Firestore DB or User ID not initialized for listener. Data will not be loaded.");
+            // Ensure db is available before setting up listener
+            if (!db) {
+                console.error("Firestore DB not initialized for listener. Data will not be loaded.");
                 return;
             }
 
-            // Using the currentUserId for the collection path. 
-            // Since all users will share the same UID (via custom token),
-            // currentUserId will always be the UID of that single shared account.
-            const collectionPath = `artifacts/${appId}/users/${currentUserId}/inventory`;
+            // CHANGED THIS LINE: Data path is now 'shared_inventory' instead of user-specific
+            const collectionPath = `artifacts/${appId}/shared_inventory`; 
             
             firestoreCollectionRef = collection(db, collectionPath);
             const q = query(firestoreCollectionRef); // Create a query against the collection
